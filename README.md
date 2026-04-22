@@ -1,7 +1,3 @@
-Here’s a clean Python-focused rewrite of your README while keeping the same level of technical depth and positioning:
-
----
-
 # kv-store
 
 A distributed in-memory key-value store built in **Python**, implementing the **Raft consensus algorithm** for fault-tolerant replication across a 3-node cluster. Designed as a ground-up exploration of the core engineering primitives behind systems like etcd and Redis Cluster.
@@ -196,8 +192,3 @@ The proxy distributes keys using a hash ring with virtual nodes. This avoids hot
 ## License
 
 MIT
-
----
-
-If you want to push this further (and honestly, you should), the next upgrade is to explicitly call out **asyncio + uvloop + multiprocessing (or free-threading Python 3.13/3.14)** in the features. That signals you’re not just “writing Python,” you’re pushing its performance model — which is what recruiters actually notice.
-
