@@ -159,3 +159,8 @@ The proxy distributes keys using a hash ring with virtual nodes. This avoids hot
 ## License
 
 MIT
+
+## References:
+
+- [Eli Bendersky's Awesome Blog Post Series on Building Raft Consensus in Go](https://eli.thegreenplace.net/2020/implementing-raft-part-0-introduction/)
+- 
