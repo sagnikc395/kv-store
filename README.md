@@ -79,9 +79,8 @@ kv-store/
 ├── proto/
 │   ├── kv.proto
 │   └── raft.proto
-├── scripts/
-│   ├── run_node.py
-│   └── run_proxy.py
+│── run_node.py
+│── run_proxy.py
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
