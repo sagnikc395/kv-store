@@ -2,21 +2,9 @@
 
 A distributed in-memory key-value store built in **Python**, implementing the **Raft consensus algorithm** for fault-tolerant replication across a 3-node cluster. Designed as a ground-up exploration of the core engineering primitives behind systems like etcd and Redis Cluster.
 
-![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square)
-![Raft](https://img.shields.io/badge/Consensus-Raft-orange?style=flat-square)
-![gRPC](https://img.shields.io/badge/RPC-gRPC-4285F4?style=flat-square)
-![Docker](https://img.shields.io/badge/Docker-ready-blue?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)
-
----
-
 ## Overview
 
 `kv-store` is a distributed key-value store that prioritizes correctness over complexity. A single-node instance behaves like an in-process cache with WAL-backed durability. A 3-node cluster introduces Raft consensus — tolerating one node failure without data loss or availability interruption.
-
-This is not meant to replace Redis. The goal is to deeply engage with real distributed systems challenges: split-brain prevention, log replication under partial failure, and consistent routing across shards.
-
----
 
 ## Architecture
 
@@ -56,7 +44,6 @@ This is not meant to replace Redis. The goal is to deeply engage with real distr
 **Read path:** Client → Proxy → leader (linearizable) or replica (stale reads)
 **Failure:** Leader crashes → election → new leader in ~150–300ms → writes resume
 
----
 
 ## Features
 
@@ -68,7 +55,6 @@ This is not meant to replace Redis. The goal is to deeply engage with real distr
 * **Async concurrency (asyncio)** — election timers, heartbeats, and replication run as independent tasks
 * **Dockerized cluster** — spin up a full 3-node cluster with `docker compose up`
 
----
 
 ## Project Structure
 
@@ -101,8 +87,6 @@ kv-store/
 ├── pyproject.toml
 └── README.md
 ```
-
----
 
 ## Quickstart
 
@@ -150,8 +134,6 @@ grpcurl -plaintext -d '{"key":"foo"}' \
   localhost:8000 kv.KVService/Get
 ```
 
----
-
 ## How It Works
 
 ### Raft Consensus
@@ -165,29 +147,15 @@ Each node operates in one of three states: **follower**, **candidate**, or **lea
 
 Replication is parallelized using async tasks. A write is committed only after a majority acknowledges it.
 
----
 
 ### Write-Ahead Log
 
-Every mutation is written to disk before being applied. On restart, the node replays the WAL to reconstruct state. This ensures durability without requiring full snapshots (yet).
+Every mutation is written to disk before being applied. On restart, the node replays the WAL to reconstruct state. This ensures durability without requiring full snapshots.
 
----
 
 ### Consistent Hashing
 
 The proxy distributes keys using a hash ring with virtual nodes. This avoids hotspots and minimizes key movement when nodes join or leave.
-
----
-
-## Roadmap
-
-* [ ] Snapshotting and log compaction
-* [ ] Linearizable reads without leader routing
-* [ ] Dynamic cluster membership
-* [ ] Metrics (Prometheus)
-* [ ] Benchmarking suite
-
----
 
 ## License
 
