@@ -1,5 +1,6 @@
 import logging
 import os
+import queue
 import random
 import socket
 import threading
@@ -7,10 +8,10 @@ import time
 from xmlrpc.client import ServerProxy
 from xmlrpc.server import SimpleXMLRPCServer
 
-from .raft import (
+from .raft import ConsensusModule
+from .types import (
     AppendEntriesArgs,
     AppendEntriesReply,
-    ConsensusModule,
     RequestVoteArgs,
     RequestVoteReply,
 )
@@ -26,6 +27,7 @@ class Server:
         self.ready = ready
         self.quit = threading.Event()
 
+        self.commit_chan: queue.Queue = queue.Queue()
         self.cm: ConsensusModule | None = None
         self.rpc_server: SimpleXMLRPCServer | None = None
         self.rpc_proxy: "RPCProxy | None" = None
@@ -36,7 +38,9 @@ class Server:
 
     def serve(self) -> None:
         with self.mu:
-            self.cm = ConsensusModule(self.server_id, self.peer_ids, self, self.ready)
+            self.cm = ConsensusModule(
+                self.server_id, self.peer_ids, self, self.ready, self.commit_chan
+            )
             self.rpc_proxy = RPCProxy(self.cm)
 
             self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -84,12 +88,11 @@ class Server:
     # ── lifecycle ──────────────────────────────
 
     def shutdown(self) -> None:
-        """Stop the CM, close the listener, and wait for all threads to exit."""
         self.cm.stop()
         self.quit.set()
         self.listener.close()
         for t in self._active_threads:
-            t.join()
+            t.join(timeout=2.0)
 
     # ── peer management ───────────────────────
 
@@ -117,10 +120,6 @@ class Server:
     # ── RPC call ─────────────────────────────
 
     def call(self, peer_id: int, method: str, args: dict) -> dict:
-        """
-        Forward an RPC call to a peer. Mirrors Go's peer.Call(serviceMethod, args, reply).
-        Raises ConnectionError if the peer client is None (disconnected/shutdown).
-        """
         with self.mu:
             peer = self.peer_clients.get(peer_id)
 
@@ -131,32 +130,23 @@ class Server:
         return rpc_fn(args)
 
 
-# ─────────────────────────────────────────────
-# RPCProxy
-# ─────────────────────────────────────────────
-
-
 class RPCProxy:
     """
     Trivial pass-through proxy for ConsensusModule's RPC methods.
-    Optionally simulates unreliable network conditions via RAFT_UNRELIABLE_RPC.
+    Optionally simulates unreliable network via RAFT_UNRELIABLE_RPC.
     """
 
     def __init__(self, cm: ConsensusModule) -> None:
         self.cm = cm
 
     def _maybe_drop_or_delay(self, method_name: str) -> bool:
-        """
-        Returns True if the call should be dropped.
-        Mirrors the dice-roll logic in Go's RPCProxy.
-        """
         dice = random.randint(0, 9)
         if dice == 9:
             self.cm.dlog("drop %s", method_name)
             return True
         if dice == 8:
             self.cm.dlog("delay %s", method_name)
-            time.sleep(0.075)  # 75 ms
+            time.sleep(0.075)
         return False
 
     def RequestVote(self, args: dict) -> dict:
@@ -164,7 +154,7 @@ class RPCProxy:
             if self._maybe_drop_or_delay("RequestVote"):
                 raise RuntimeError("RPC failed")
         else:
-            time.sleep(random.randint(1, 5) / 1000)  # 1–5 ms
+            time.sleep(random.randint(1, 5) / 1000)
 
         reply = RequestVoteReply()
         self.cm.request_vote(RequestVoteArgs(**args), reply)
@@ -175,7 +165,7 @@ class RPCProxy:
             if self._maybe_drop_or_delay("AppendEntries"):
                 raise RuntimeError("RPC failed")
         else:
-            time.sleep(random.randint(1, 5) / 1000)  # 1–5 ms
+            time.sleep(random.randint(1, 5) / 1000)
 
         reply = AppendEntriesReply()
         self.cm.append_entries(AppendEntriesArgs(**args), reply)
