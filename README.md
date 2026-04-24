@@ -1,166 +1,102 @@
 # kv-store
 
-A distributed in-memory key-value store built in **Python**, implementing the **Raft consensus algorithm** for fault-tolerant replication across a 3-node cluster. Designed as a ground-up exploration of the core engineering primitives behind systems like etcd and Redis Cluster.
+`kv-store` is a small distributed key-value store written in Python. It combines:
 
-## Overview
+- An in-memory store with optional per-key TTL
+- A Raft consensus module for leader election and log replication
+- WAL replay for restoring node state on restart
+- A simple XML-RPC proxy with consistent hashing for key routing
 
-`kv-store` is a distributed key-value store that prioritizes correctness over complexity. A single-node instance behaves like an in-process cache with WAL-backed durability. A 3-node cluster introduces Raft consensus — tolerating one node failure without data loss or availability interruption.
+The project is intentionally compact. It is useful as a learning implementation of replication, coordination, and failure handling rather than a production-ready datastore.
 
-## Architecture
+## What Is In The Repo
 
-```
-                        ┌─────────────────────┐
-                        │     Client / CLI     │
-                        └──────────┬──────────┘
-                                   │ gRPC
-                                   ▼
-                        ┌─────────────────────┐
-                        │   Proxy / Router    │
-                        │  (consistent hash)  │
-                        └──────────┬──────────┘
-                                   │
-              ┌────────────────────┼────────────────────┐
-              │                    │                    │
-              ▼                    ▼                    ▼
-   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-   │   Node 1        │  │   Node 2        │  │   Node 3        │
-   │   (Leader)      │  │   (Follower)    │  │   (Follower)    │
-   │                 │  │                 │  │                 │
-   │  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌───────────┐  │
-   │  │ Raft FSM  │  │  │  │ Raft FSM  │  │  │  │ Raft FSM  │  │
-   │  └─────┬─────┘  │  │  └─────┬─────┘  │  │  └─────┬─────┘  │
-   │        │        │  │        │        │  │        │        │
-   │  ┌─────▼─────┐  │  │  ┌─────▼─────┐  │  │  ┌─────▼─────┐  │
-   │  │  KV Store │  │  │  │  KV Store │  │  │  │  KV Store │  │
-   │  └─────┬─────┘  │  │  └─────┬─────┘  │  │  └─────┬─────┘  │
-   │        │        │  │        │        │  │        │        │
-   │  ┌─────▼─────┐  │  │  ┌─────▼─────┐  │  │  ┌─────▼─────┐  │
-   │  │    WAL    │  │  │  │    WAL    │  │  │  │    WAL    │  │
-   │  └───────────┘  │  │  └───────────┘  │  │  └───────────┘  │
-   └─────────────────┘  └─────────────────┘  └─────────────────┘
+```text
+kvstore/
+  raft/     Raft state machine, RPC server, log replication
+  store/    In-memory KV store and TTL worker
+  wal/      WAL append and replay helpers
+  proxy/    Consistent hash ring and XML-RPC proxy handler
+run_node.py Start a single Raft node
+run_proxy.py Start the routing proxy
+tests/      Store, WAL, proxy, and Raft tests
 ```
 
-**Write path:** Client → Proxy → Leader → WAL append → replicate to followers → majority ack → apply → respond
-**Read path:** Client → Proxy → leader (linearizable) or replica (stale reads)
-**Failure:** Leader crashes → election → new leader in ~150–300ms → writes resume
+## Current Transport
 
+The active implementation uses Python's built-in `xmlrpc` modules for node-to-node RPCs and proxy-to-node routing.
 
-## Features
+`proto/` files are present in the repository, but the current runtime path does not use gRPC.
 
-* **Raft consensus** — leader election, log replication, quorum-based writes, follower recovery
-* **Write-ahead log (WAL)** — durable append-only persistence with replay on restart
-* **Consistent hashing** — virtual nodes for even key distribution and minimal reshuffling
-* **TTL-based expiry** — background async task cleans expired keys
-* **gRPC interface** — typed API using protobufs (unary + streaming)
-* **Async concurrency (asyncio)** — election timers, heartbeats, and replication run as independent tasks
-* **Dockerized cluster** — spin up a full 3-node cluster with `docker compose up`
+## Requirements
 
+- Python 3.10+
+- `uv` recommended for dependency management and running tests
 
-## Project Structure
-
-```
-kv-store/
-├── kvstore/
-│   ├── raft/
-│   │   ├── node.py         # Raft state machine
-│   │   ├── log.py          # Log replication
-│   │   ├── election.py     # Leader election logic
-│   │   └── rpc.py          # gRPC communication
-│   ├── store/
-│   │   ├── store.py        # In-memory KV store
-│   │   └── ttl.py          # TTL cleanup worker
-│   ├── wal/
-│   │   ├── wal.py          # WAL append logic
-│   │   └── replay.py       # WAL recovery
-│   ├── proxy/
-│   │   ├── router.py       # Consistent hashing ring
-│   │   └── handler.py      # Request routing
-│   └── config.py           # Configuration
-├── proto/
-│   ├── kv.proto
-│   └── raft.proto
-│── run_node.py
-│── run_proxy.py
-├── docker-compose.yml
-├── Dockerfile
-├── pyproject.toml
-└── README.md
-```
-
-## Quickstart
-
-### Prerequisites
-
-* Python 3.12+
-* `grpcio`, `protobuf`
-* Docker & Docker Compose
-
-### 1. Install dependencies
+## Setup
 
 ```bash
 git clone https://github.com/sagnikc395/kv-store.git
 cd kv-store
+uv sync
+```
 
+If you prefer `pip`:
+
+```bash
 pip install -e .
 ```
 
-### 2. Run a single node
+## Run Tests
 
 ```bash
+<<<<<<< HEAD
 python run_node.py --id=1 --port=7001 --wal-dir=./data/node1
+=======
+uv run pytest -q
+>>>>>>> 5aefd7c (chore: fix bugs in leader election)
 ```
 
-### 3. Run a 3-node cluster
+## Run A Node
+
+Start one node:
 
 ```bash
-docker compose up --build
-
-# Node 1 → localhost:7001
-# Node 2 → localhost:7002
-# Node 3 → localhost:7003
-# Proxy → localhost:8000
+python run_node.py --id=1 --port=7001 --wal-dir=./data/node1 --peers=2,3
 ```
 
-### 4. Interact via CLI
+Arguments:
+
+- `--id`: numeric node ID
+- `--port`: local listen port
+- `--wal-dir`: directory used for WAL storage
+- `--peers`: comma-separated peer IDs
+
+`run_node.py` restores previous commands from the WAL, starts the TTL worker, and applies committed Raft entries to both the store and the WAL.
+
+## Run The Proxy
 
 ```bash
-# Set
-grpcurl -plaintext -d '{"key":"foo","value":"bar"}' \
-  localhost:8000 kv.KVService/Set
-
-# Get
-grpcurl -plaintext -d '{"key":"foo"}' \
-  localhost:8000 kv.KVService/Get
+python run_proxy.py --port=8000 --nodes=localhost:7001,localhost:7002,localhost:7003
 ```
 
-## How It Works
+The proxy uses a consistent-hash ring to route each key to a node address.
 
-### Raft Consensus
+## Architecture Notes
 
-Each node operates in one of three states: **follower**, **candidate**, or **leader**.
+- Writes are accepted only by the Raft leader.
+- Followers replicate log entries through `AppendEntries`.
+- Committed entries are applied to the in-memory store.
+- TTL expiry is handled by a background sweep worker.
+- WAL replay rebuilds store state after restart.
 
-* Followers wait for heartbeats
-* Timeout → become candidate → request votes
-* Majority vote → leader elected
-* Leader handles all writes and replicates logs
+## Fixed Issues In This Revision
 
-Replication is parallelized using async tasks. A write is committed only after a majority acknowledges it.
-
-
-### Write-Ahead Log
-
-Every mutation is written to disk before being applied. On restart, the node replays the WAL to reconstruct state. This ensures durability without requiring full snapshots.
-
-
-### Consistent Hashing
-
-The proxy distributes keys using a hash ring with virtual nodes. This avoids hotspots and minimizes key movement when nodes join or leave.
+- Raft leaders now step down when they lose quorum instead of continuing to report themselves as leader indefinitely.
+- Vote state is preserved correctly when a node steps down in the same term, which prevents unstable leader changes after reconnection.
+- Election timing is less aggressive, reducing avoidable leader churn in multi-node tests.
+- Project metadata and documentation now match the actual implementation.
 
 ## License
 
 MIT
-
-## References:
-
-- [Eli Bendersky's Awesome Blog Post Series on Building Raft Consensus in Go](https://eli.thegreenplace.net/2020/implementing-raft-part-0-introduction/)
-- [Raft Consensus Paper](https://raft.github.io/raft.pdf)

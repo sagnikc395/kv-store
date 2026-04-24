@@ -51,6 +51,8 @@ class ConsensusModule:
         # volatile state — leader only (reset on each election win)
         self.next_index: dict[int, int] = {}
         self.match_index: dict[int, int] = {}
+        self._leader_quorum_seen_at: float = 0.0
+        self._leader_quorum_timeout: float = 0.0
 
         # signals the commit-notifier thread
         self._new_commit_event = threading.Event()
@@ -188,7 +190,7 @@ class ConsensusModule:
     def _election_timeout(self) -> float:
         if os.environ.get("RAFT_FORCE_MORE_REELECTION") and random.randint(0, 2) == 0:
             return 0.150
-        return (150 + random.randint(0, 149)) / 1000
+        return (300 + random.randint(0, 199)) / 1000
 
     def run_election_timer(self) -> None:
         timeout = self._election_timeout()
@@ -264,9 +266,10 @@ class ConsensusModule:
     def _become_follower(self, term: int) -> None:
         """Revert to Follower. Expects mu held."""
         self.dlog("becomes Follower with term=%d; log=%s", term, self.log)
+        if term > self.current_term:
+            self.voted_for = -1
         self.state = CMState.Follower
         self.current_term = term
-        self.voted_for = -1
         self.election_reset_event = time.monotonic()
         threading.Thread(target=self.run_election_timer, daemon=True).start()
 
@@ -275,6 +278,10 @@ class ConsensusModule:
         self.state = CMState.Leader
         self.next_index = {pid: len(self.log) for pid in self.peer_ids}
         self.match_index = {pid: -1 for pid in self.peer_ids}
+        self._leader_quorum_seen_at = time.monotonic()
+        # Leaders should step down quickly when isolated instead of waiting for a
+        # full randomized follower election timeout.
+        self._leader_quorum_timeout = min(self._election_timeout(), 0.125)
         self.dlog(
             "becomes Leader; term=%d, next_index=%s, match_index=%s",
             self.current_term, self.next_index, self.match_index,
@@ -285,6 +292,17 @@ class ConsensusModule:
                 self._leader_send_append_entries()
                 time.sleep(0.050)
                 with self.mu:
+                    if (
+                        self.state == CMState.Leader
+                        and time.monotonic() - self._leader_quorum_seen_at
+                        >= self._leader_quorum_timeout
+                    ):
+                        self.dlog(
+                            "leader quorum timeout after %.3f s; stepping down",
+                            self._leader_quorum_timeout,
+                        )
+                        self._become_follower(self.current_term)
+                        return
                     if self.state != CMState.Leader:
                         return
 
@@ -297,6 +315,12 @@ class ConsensusModule:
             if self.state != CMState.Leader:
                 return
             saved_current_term = self.current_term
+            round_state = {
+                "successes": 1,
+                "quorum_recorded": len(self.peer_ids) == 0,
+            }
+            if round_state["quorum_recorded"]:
+                self._leader_quorum_seen_at = time.monotonic()
 
         for peer_id in self.peer_ids:
             with self.mu:
@@ -339,6 +363,13 @@ class ConsensusModule:
                         if reply.success:
                             self.next_index[peer_id] = ni + len(args.entries)
                             self.match_index[peer_id] = self.next_index[peer_id] - 1
+                            round_state["successes"] += 1
+                            if (
+                                not round_state["quorum_recorded"]
+                                and round_state["successes"] * 2 > len(self.peer_ids) + 1
+                            ):
+                                self._leader_quorum_seen_at = time.monotonic()
+                                round_state["quorum_recorded"] = True
                             self.dlog(
                                 "AppendEntries reply from %d success: ni=%d mi=%d",
                                 peer_id, self.next_index[peer_id], self.match_index[peer_id],
