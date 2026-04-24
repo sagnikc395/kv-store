@@ -85,12 +85,6 @@ The proxy uses a consistent-hash ring to route each key to a node address.
 - TTL expiry is handled by a background sweep worker.
 - WAL replay rebuilds store state after restart.
 
-## Things to Consider
-
-- Raft leaders now step down when they lose quorum instead of continuing to report themselves as leader indefinitely.
-- Vote state is preserved correctly when a node steps down in the same term, which prevents unstable leader changes after reconnection.
-- Election timing is less aggressive, reducing avoidable leader churn in multi-node tests.
-- Project metadata and documentation now match the actual implementation.
 
 ## License
 
