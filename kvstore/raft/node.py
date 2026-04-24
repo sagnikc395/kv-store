@@ -1,15 +1,46 @@
 ## implements the consensus module , the heart of the Raft algorithm
 
+from __future__ import annotations
+
 from .server import Server
+from .log import LogEntry
+from .consts import CMState
+import time
+import threading
+
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .server import Server
 
 
 class ConsensusModule:
-    # server id of this consensus module
-    server_id: int
-    # peerids will list the ids of our peers in the cluster
-    peer_ids: list[int]
+    def __init__(
+        self, id: int, peer_ids: list[int], server: Server, ready: threading.Event
+    ) -> None:
+        self.mu = threading.Lock()
+        self.id = id
+        self.peer_ids = peer_ids
+        self.server = server
 
-    # server is the server containing this consensus module. it is used to issue RPC calls to peers
-    server: Server
+        # persistent Raft state on all servers
+        self.current_term: int = 0
+        self.voted_for: int = -1
+        self.log: list[LogEntry] = []
 
-    
+        # volatile Raft state on all servers
+        self.state: CMState = CMState.Follower
+        self.election_reset_event: float = 0.0
+
+        def _start(ready: threading.Event) -> None:
+            ready.wait()
+            with self.mu:
+                self.election_reset_event = time.time()
+            self.run_election_timer()
+
+        t = threading.Thread(target=_start, args=(ready,), daemon=True)
+        t.start()
+
+    def run_election_timer(self) -> None:
+        raise NotImplementedError
