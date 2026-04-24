@@ -2,7 +2,7 @@ import socket
 import logging
 import threading
 
-from .node import ConsensusModule
+from .raft import ConsensusModule
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy
 import logging

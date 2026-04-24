@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from kvstore.raft.types import (
+    AppendEntriesArgs,
+    AppendEntriesReply,
+    RequestVoteArgs,
+    RequestVoteReply,
+)
+
 
 from .server import Server
 from .log import LogEntry, log
