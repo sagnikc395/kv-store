@@ -163,4 +163,4 @@ MIT
 ## References:
 
 - [Eli Bendersky's Awesome Blog Post Series on Building Raft Consensus in Go](https://eli.thegreenplace.net/2020/implementing-raft-part-0-introduction/)
-- 
+- [Raft Consensus Paper](https://raft.github.io/raft.pdf)
