@@ -1,0 +1,51 @@
+services:
+  node1:
+    build: .
+    command: ["python", "run_node.py", "--id=1", "--port=7001", "--wal-dir=/data", "--peers=2,3"]
+    ports:
+      - "7001:7001"
+    volumes:
+      - node1_data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  node2:
+    build: .
+    command: ["python", "run_node.py", "--id=2", "--port=7002", "--wal-dir=/data", "--peers=1,3"]
+    ports:
+      - "7002:7002"
+    volumes:
+      - node2_data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  node3:
+    build: .
+    command: ["python", "run_node.py", "--id=3", "--port=7003", "--wal-dir=/data", "--peers=1,2"]
+    ports:
+      - "7003:7003"
+    volumes:
+      - node3_data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  proxy:
+    build: .
+    command:
+      - python
+      - run_proxy.py
+      - "--port=8000"
+      - "--nodes=node1:7001,node2:7002,node3:7003"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - node1
+      - node2
+      - node3
+    environment:
+      - PYTHONUNBUFFERED=1
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:
