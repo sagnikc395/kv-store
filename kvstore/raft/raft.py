@@ -9,7 +9,6 @@ from kvstore.raft.types import (
     RequestVoteReply,
 )
 
-
 from .server import Server
 from .log import LogEntry, log
 from .consts import CMState, DEBUG_CM
