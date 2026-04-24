@@ -26,8 +26,6 @@ tests/      Store, WAL, proxy, and Raft tests
 
 The active implementation uses Python's built-in `xmlrpc` modules for node-to-node RPCs and proxy-to-node routing.
 
-`proto/` files are present in the repository, but the current runtime path does not use gRPC.
-
 ## Requirements
 
 - Python 3.10+
@@ -50,11 +48,8 @@ pip install -e .
 ## Run Tests
 
 ```bash
-<<<<<<< HEAD
 python run_node.py --id=1 --port=7001 --wal-dir=./data/node1
-=======
 uv run pytest -q
->>>>>>> 5aefd7c (chore: fix bugs in leader election)
 ```
 
 ## Run A Node
@@ -90,7 +85,7 @@ The proxy uses a consistent-hash ring to route each key to a node address.
 - TTL expiry is handled by a background sweep worker.
 - WAL replay rebuilds store state after restart.
 
-## Fixed Issues In This Revision
+## Things to Consider
 
 - Raft leaders now step down when they lose quorum instead of continuing to report themselves as leader indefinitely.
 - Vote state is preserved correctly when a node steps down in the same term, which prevents unstable leader changes after reconnection.
