@@ -2,7 +2,6 @@ import logging
 import os
 import queue
 import random
-import socket
 import threading
 import time
 from xmlrpc.client import ServerProxy
@@ -25,80 +24,38 @@ class Server:
         self.peer_ids = peer_ids
         self.peer_clients: dict[int, ServerProxy | None] = {}
         self.ready = ready
-        self.quit = threading.Event()
 
         self.commit_chan: queue.Queue = queue.Queue()
         self.cm: ConsensusModule | None = None
         self.rpc_server: SimpleXMLRPCServer | None = None
-        self.rpc_proxy: "RPCProxy | None" = None
-        self.listener: socket.socket | None = None
 
         self.mu = threading.Lock()
-        self._active_threads: list[threading.Thread] = []
 
     def serve(self) -> None:
         with self.mu:
+            # Bind to an OS-assigned port so tests can run multiple servers
+            self.rpc_server = SimpleXMLRPCServer(
+                ("127.0.0.1", 0), logRequests=False, allow_none=True
+            )
             self.cm = ConsensusModule(
                 self.server_id, self.peer_ids, self, self.ready, self.commit_chan
             )
-            self.rpc_proxy = RPCProxy(self.cm)
+            self.rpc_server.register_instance(RPCProxy(self.cm))
 
-            self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.listener.bind(("", 0))
-            self.listener.listen(5)
-            addr = self.listener.getsockname()
-            logging.debug("[%s] listening at %s:%s", self.server_id, addr[0], addr[1])
-
-            self.rpc_server = SimpleXMLRPCServer(
-                addr, logRequests=False, allow_none=True, bind_and_activate=False
-            )
-            self.rpc_server.register_instance(self.rpc_proxy)
-
-        t = threading.Thread(target=self._accept_loop, daemon=True)
-        self._active_threads.append(t)
+        t = threading.Thread(target=self.rpc_server.serve_forever, daemon=True)
         t.start()
-
-    def _accept_loop(self) -> None:
-        while True:
-            try:
-                self.listener.settimeout(1.0)
-                conn, _ = self.listener.accept()
-            except TimeoutError:
-                if self.quit.is_set():
-                    return
-                continue
-            except OSError:
-                if self.quit.is_set():
-                    return
-                logging.fatal("accept error")
-                raise
-
-            t = threading.Thread(target=self._serve_conn, args=(conn,), daemon=True)
-            self._active_threads.append(t)
-            t.start()
-
-    def _serve_conn(self, conn: socket.socket) -> None:
-        try:
-            self.rpc_server.socket = conn
-            self.rpc_server._handle_request_noblock()
-        finally:
-            conn.close()
 
     # ── lifecycle ──────────────────────────────
 
     def shutdown(self) -> None:
         self.cm.stop()
-        self.quit.set()
-        self.listener.close()
-        for t in self._active_threads:
-            t.join(timeout=2.0)
+        self.rpc_server.shutdown()
 
     # ── peer management ───────────────────────
 
     def get_listen_addr(self) -> tuple[str, int]:
         with self.mu:
-            return self.listener.getsockname()
+            return self.rpc_server.server_address
 
     def connect_to_peer(self, peer_id: int, addr: tuple[str, int]) -> None:
         with self.mu:
@@ -120,6 +77,7 @@ class Server:
     # ── RPC call ─────────────────────────────
 
     def call(self, peer_id: int, method: str, args: dict) -> dict:
+        """Forward an RPC call to a peer."""
         with self.mu:
             peer = self.peer_clients.get(peer_id)
 
@@ -132,8 +90,8 @@ class Server:
 
 class RPCProxy:
     """
-    Trivial pass-through proxy for ConsensusModule's RPC methods.
-    Optionally simulates unreliable network via RAFT_UNRELIABLE_RPC.
+    Thin pass-through proxy for ConsensusModule RPCs.
+    Simulates unreliable network when RAFT_UNRELIABLE_RPC is set.
     """
 
     def __init__(self, cm: ConsensusModule) -> None:
@@ -152,7 +110,7 @@ class RPCProxy:
     def RequestVote(self, args: dict) -> dict:
         if os.environ.get("RAFT_UNRELIABLE_RPC"):
             if self._maybe_drop_or_delay("RequestVote"):
-                raise RuntimeError("RPC failed")
+                raise RuntimeError("RPC dropped")
         else:
             time.sleep(random.randint(1, 5) / 1000)
 
@@ -163,7 +121,7 @@ class RPCProxy:
     def AppendEntries(self, args: dict) -> dict:
         if os.environ.get("RAFT_UNRELIABLE_RPC"):
             if self._maybe_drop_or_delay("AppendEntries"):
-                raise RuntimeError("RPC failed")
+                raise RuntimeError("RPC dropped")
         else:
             time.sleep(random.randint(1, 5) / 1000)
 
