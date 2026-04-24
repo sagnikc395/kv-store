@@ -5,8 +5,6 @@ description = "A replicated in-memory key-value store with Raft-based leader ele
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "grpcio>=1.80.0",
-    "protobuf<4.0.0",
     "pytest>=9.0.3",
 ]
 
