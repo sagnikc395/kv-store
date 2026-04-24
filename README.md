@@ -107,7 +107,7 @@ pip install -e .
 ### 2. Run a single node
 
 ```bash
-python scripts/run_node.py --id=1 --port=7001 --wal-dir=./data/node1
+python run_node.py --id=1 --port=7001 --wal-dir=./data/node1
 ```
 
 ### 3. Run a 3-node cluster
