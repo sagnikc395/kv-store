@@ -80,3 +80,8 @@ class Server:
         self.listener.close()
         for t in self._active_threads:
             t.join()
+
+class RPCProxy:
+    # a trivial pass-thru proxy type for CM RPC methods 
+    
+    def __
