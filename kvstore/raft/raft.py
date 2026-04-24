@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from .server import Server
 from .log import LogEntry, log
 from .consts import CMState, DEBUG_CM
@@ -67,6 +68,57 @@ class ConsensusModule:
             self.dlog("becomes Dead")
 
     # RPC handlers
+
+    def request_vote(self, args: RequestVoteArgs, reply: RequestVoteReply) -> None:
+        with self.mu:
+            if self.state == CMState.Dead:
+                return
+
+            self.dlog(
+                "RequestVote: %s [current_term=%d, voted_for=%d]",
+                args,
+                self.current_term,
+                self.voted_for,
+            )
+
+            if args.term > self.current_term:
+                self.dlog("... term out of date in RequestVote")
+                self._become_follower(args.term)
+
+            if self.current_term == args.term and (
+                self.voted_for == -1 or self.voted_for == args.candidate_id
+            ):
+                reply.vote_granted = True
+                self.voted_for = args.candidate_id
+                self.election_reset_event = time.monotonic()
+            else:
+                reply.vote_granted = False
+
+            reply.term = self.current_term
+            self.dlog("... RequestVote reply: %s", reply)
+
+    def append_entries(
+        self, args: AppendEntriesArgs, reply: AppendEntriesReply
+    ) -> None:
+        with self.mu:
+            if self.state == CMState.Dead:
+                return
+
+            self.dlog("AppendEntries: %s", args)
+
+            if args.term > self.current_term:
+                self.dlog("... term out of date in AppendEntries")
+                self._become_follower(args.term)
+
+            reply.success = False
+            if args.term == self.current_term:
+                if self.state != CMState.Follower:
+                    self._become_follower(args.term)
+                self.election_reset_event = time.monotonic()
+                reply.success = True
+
+            reply.term = self.current_term
+            self.dlog("AppendEntries reply: %s", reply)
 
     # election timer
 
@@ -164,3 +216,60 @@ class ConsensusModule:
 
         # Fallback timer in case this election fails.
         threading.Thread(target=self.run_election_timer, daemon=True).start()
+
+    # ── state transitions ────────────────────
+
+    def _become_follower(self, term: int) -> None:
+        """Revert to Follower. Expects mu held."""
+        self.dlog("becomes Follower with term=%d; log=%s", term, self.log)
+        self.state = CMState.Follower
+        self.current_term = term
+        self.voted_for = -1
+        self.election_reset_event = time.monotonic()
+
+        threading.Thread(target=self.run_election_timer, daemon=True).start()
+
+    def _start_leader(self) -> None:
+        """Become Leader and start sending heartbeats. Expects mu held."""
+        self.state = CMState.Leader
+        self.dlog("becomes Leader; term=%d, log=%s", self.current_term, self.log)
+
+        def _heartbeat_loop() -> None:
+            while True:
+                self._leader_send_heartbeats()
+                time.sleep(0.050)  # 50 ms heartbeat interval
+
+                with self.mu:
+                    if self.state != CMState.Leader:
+                        return
+
+        threading.Thread(target=_heartbeat_loop, daemon=True).start()
+
+    # heartbeats
+
+    def _leader_send_heartbeats(self) -> None:
+        # send AppendEntries (heartbeat) to all peers and process replies.
+        with self.mu:
+            if self.state != CMState.Leader:
+                return
+            saved_term = self.current_term
+
+        for peer_id in self.peer_ids:
+            args = AppendEntriesArgs(term=saved_term, leader_id=self.id)
+
+            def _send(peer_id: int = peer_id, args: AppendEntriesArgs = args) -> None:
+                self.dlog("sending AppendEntries to %d: ni=0, args=%s", peer_id, args)
+                try:
+                    reply_data = self.server.call(
+                        peer_id, "AppendEntries", args.__dict__
+                    )
+                    reply = AppendEntriesReply(**reply_data)
+                except Exception:
+                    return
+
+                with self.mu:
+                    if reply.term > saved_term:
+                        self.dlog("term out of date in heartbeat reply")
+                        self._become_follower(reply.term)
+
+            threading.Thread(target=_send, daemon=True).start()
