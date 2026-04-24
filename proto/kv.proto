@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package kv;
+
+option py_generic_services = true;
+
+// ── service definition ───────────────────────
+
+service KVService {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Set(SetRequest) returns (SetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Watch(WatchRequest) returns (stream WatchEvent);
+}
+
+// ── messages ─────────────────────────────────
+
+message GetRequest {
+  string key = 1;
+  bool   linearizable = 2;  // true → read from leader only
+}
+
+message GetResponse {
+  string key   = 1;
+  string value = 2;
+  bool   found = 3;
+}
+
+message SetRequest {
+  string key   = 1;
+  string value = 2;
+  double ttl_s = 3;  // 0 = no expiry
+}
+
+message SetResponse {
+  bool ok = 1;
+}
+
+message DeleteRequest {
+  string key = 1;
+}
+
+message DeleteResponse {
+  bool ok      = 1;
+  bool existed = 2;
+}
+
+message WatchRequest {
+  string key_prefix = 1;
+}
+
+message WatchEvent {
+  enum EventType {
+    PUT    = 0;
+    DELETE = 1;
+  }
+  EventType type  = 1;
+  string    key   = 2;
+  string    value = 3;
+}
