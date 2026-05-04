@@ -7,7 +7,7 @@
 - WAL replay for restoring node state on restart
 - A simple XML-RPC proxy with consistent hashing for key routing
 
-The project is intentionally compact. It is useful as a learning implementation of replication, coordination, and failure handling rather than a production-ready datastore.
+
 
 ## What Is In The Repo
 
