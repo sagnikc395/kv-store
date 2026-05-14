@@ -52,6 +52,21 @@ go test ./...
 
 At the moment the repository is organized as reusable packages rather than a finished command-line service. The test command is still useful because it builds every package and catches compile-time integration issues across the store, WAL, Raft, and proxy layers.
 
+## Running With Docker
+
+The repository does not currently expose a runnable `main` service, so the Docker setup builds the project and runs the package checks.
+
+```bash
+docker compose up --build
+```
+
+You can also run the same check directly with Docker:
+
+```bash
+docker build -t kv-store .
+docker run --rm kv-store
+```
+
 ## License
 
 MIT

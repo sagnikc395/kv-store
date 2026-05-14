@@ -1,0 +1,14 @@
+services:
+  kv-store:
+    build:
+      context: .
+      target: test
+    command: ["go", "test", "./..."]
+    volumes:
+      - .:/app
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+
+volumes:
+  go-build-cache:
+  go-mod-cache:

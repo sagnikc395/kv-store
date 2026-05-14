@@ -1,0 +1,19 @@
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+
+# Local/editor files
+.DS_Store
+.idea
+.vscode
+
+# Build/test output
+bin
+dist
+coverage.out
+*.test
+
+# Runtime data that should be mounted explicitly when needed
+data
+tmp
