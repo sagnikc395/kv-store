@@ -1,90 +1,68 @@
 # kv-store
 
-`kv-store` is a small distributed key-value store written in Python. It combines:
+`kv-store` is a Go implementation of a small distributed key-value store. I built it to practice the pieces that sit behind durable, replicated storage systems: command application, write-ahead logging, leader election, log replication, TTL cleanup, and key routing.
 
-- An in-memory store with optional per-key TTL
-- A Raft consensus module for leader election and log replication
-- WAL replay for restoring node state on restart
-- A simple XML-RPC proxy with consistent hashing for key routing
+## STAR Summary
 
+### Situation
 
+Simple in-memory key-value stores are fast, but they lose data on restart and become hard to scale once traffic has to be split across nodes. I wanted this project to go past a basic map-backed store and explore the systems work needed to keep writes ordered, recoverable, and routable across a small cluster.
 
-## What Is In The Repo
+### Task
+
+The goal was to build the core building blocks of a distributed KV store without hiding the interesting parts behind a large framework. The project needed to support basic `set`, `get`, and `delete` behavior, optional per-key TTLs, durable replay from disk, Raft-style consensus for replicated writes, and consistent hashing for routing keys to nodes.
+
+### Action
+
+I split the project into focused Go packages:
+
+- `store`: thread-safe in-memory storage with TTL-aware reads, deletes, key listing, and a background expiry worker.
+- `wal`: append-only JSON-lines write-ahead log with replay support for restoring committed commands.
+- `raft`: a compact Raft consensus module with follower, candidate, leader, and dead states, randomized elections, vote requests, heartbeats, log replication, commit notification, and leader step-down when quorum is lost.
+- `proxy`: a consistent hash ring with virtual nodes plus an RPC-aware handler that routes key operations to the node responsible for that key.
+
+The implementation keeps the command format shared across the store, WAL, and Raft layers so committed entries can flow through the system cleanly. Writes are submitted through the leader, replicated with `AppendEntries`, committed after quorum agreement, and then applied to the store. TTL cleanup is handled separately so normal reads and writes stay simple.
+
+### Result
+
+The result is a small but complete distributed storage prototype that demonstrates the main mechanics behind a replicated key-value system. It can:
+
+- Store, read, delete, and expire keys in memory.
+- Persist committed operations to a WAL and replay them after restart.
+- Elect a leader and replicate log entries across peers using Go RPC.
+- Route keys across nodes with consistent hashing and virtual nodes.
+- Compile cleanly across all current packages with `go test ./...`.
+
+## Repository Layout
 
 ```text
-kvstore/
-  raft/     Raft state machine, RPC server, log replication
-  store/    In-memory KV store and TTL worker
-  wal/      WAL append and replay helpers
-  proxy/    Consistent hash ring and XML-RPC proxy handler
-run_node.py Start a single Raft node
-run_proxy.py Start the routing proxy
-tests/      Store, WAL, proxy, and Raft tests
+.
+|-- store/   In-memory KV store, command application, and TTL worker
+|-- wal/     Append-only JSON-lines WAL and replay logic
+|-- raft/    Raft state machine, RPC server, elections, replication, commits
+|-- proxy/   Consistent hash ring and RPC routing handler
+|-- go.mod   Go module definition
+`-- README.md
 ```
 
-## Current Transport
+## Tech Stack
 
-The active implementation uses Python's built-in `xmlrpc` modules for node-to-node RPCs and proxy-to-node routing.
+- Go 1.26.3
+- Standard library networking with `net/rpc`
+- JSON-lines WAL records
+- Consistent hashing with virtual nodes
 
-## Requirements
-
-- Python 3.10+
-- `uv` recommended for dependency management and running tests
-
-## Setup
+## Running Checks
 
 ```bash
-git clone https://github.com/sagnikc395/kv-store.git
-cd kv-store
-uv sync
+go test ./...
 ```
 
-If you prefer `pip`:
+At the moment the repository is organized as reusable packages rather than a finished command-line service. The test command is still useful because it builds every package and catches compile-time integration issues across the store, WAL, Raft, and proxy layers.
 
-```bash
-pip install -e .
-```
+## Why This Project Matters
 
-## Run Tests
-
-```bash
-python run_node.py --id=1 --port=7001 --wal-dir=./data/node1
-uv run pytest -q
-```
-
-## Run A Node
-
-Start one node:
-
-```bash
-python run_node.py --id=1 --port=7001 --wal-dir=./data/node1 --peers=2,3
-```
-
-Arguments:
-
-- `--id`: numeric node ID
-- `--port`: local listen port
-- `--wal-dir`: directory used for WAL storage
-- `--peers`: comma-separated peer IDs
-
-`run_node.py` restores previous commands from the WAL, starts the TTL worker, and applies committed Raft entries to both the store and the WAL.
-
-## Run The Proxy
-
-```bash
-python run_proxy.py --port=8000 --nodes=localhost:7001,localhost:7002,localhost:7003
-```
-
-The proxy uses a consistent-hash ring to route each key to a node address.
-
-## Architecture Notes
-
-- Writes are accepted only by the Raft leader.
-- Followers replicate log entries through `AppendEntries`.
-- Committed entries are applied to the in-memory store.
-- TTL expiry is handled by a background sweep worker.
-- WAL replay rebuilds store state after restart.
-
+This project is intentionally small, but it touches real distributed systems concerns: leader-only writes, replication lag, quorum loss, replay after restart, TTL cleanup, and key distribution. It gave me a practical way to connect data engineering fundamentals with lower-level storage and coordination mechanics.
 
 ## License
 
