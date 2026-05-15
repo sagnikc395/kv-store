@@ -1,14 +1,13 @@
-# syntax=docker/dockerfile:1
-
-FROM golang:1.26.3-alpine AS test
+FROM python:3.13-slim
 
 WORKDIR /app
 
-COPY go.mod ./
-RUN go mod download
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
 
-COPY . .
+COPY kvstore/ kvstore/
+COPY run_node.py run_proxy.py ./
 
-RUN go test ./...
+ENV PYTHONUNBUFFERED=1
 
-CMD ["go", "test", "./..."]
+ENTRYPOINT ["uv", "run"]
