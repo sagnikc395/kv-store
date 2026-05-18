@@ -1,13 +1,17 @@
-FROM python:3.13-slim
+FROM golang:1.26 AS build
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
+COPY go.mod ./
+COPY cmd/ cmd/
+COPY internal/ internal/
 
-COPY kvstore/ kvstore/
-COPY run_node.py run_proxy.py ./
+RUN CGO_ENABLED=0 go build -o /out/kv-node ./cmd/kv-node && \
+    CGO_ENABLED=0 go build -o /out/kv-proxy ./cmd/kv-proxy
 
-ENV PYTHONUNBUFFERED=1
+FROM gcr.io/distroless/static-debian12
 
-ENTRYPOINT ["uv", "run"]
+COPY --from=build /out/kv-node /kv-node
+COPY --from=build /out/kv-proxy /kv-proxy
+
+ENTRYPOINT ["/kv-node"]
