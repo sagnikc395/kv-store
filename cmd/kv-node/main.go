@@ -19,38 +19,34 @@ import (
 
 type appliedTracker struct {
 	mu    sync.Mutex
-	cond  *sync.Cond
 	index int
 }
 
-func newAppliedTracker() *appliedTracker {
-	t := &appliedTracker{index: -1}
-	t.cond = sync.NewCond(&t.mu)
-	return t
+func newAppliedTracker(index int) *appliedTracker {
+	return &appliedTracker{index: index}
 }
 
 func (t *appliedTracker) mark(index int) {
 	t.mu.Lock()
 	t.index = index
-	t.cond.Broadcast()
 	t.mu.Unlock()
 }
 
 func (t *appliedTracker) wait(ctx context.Context, index int) bool {
-	done := make(chan struct{})
-	go func() {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		t.mu.Lock()
-		defer t.mu.Unlock()
-		for t.index < index {
-			t.cond.Wait()
+		applied := t.index >= index
+		t.mu.Unlock()
+		if applied {
+			return true
 		}
-		close(done)
-	}()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-done:
-		return true
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -58,6 +54,7 @@ func main() {
 	var (
 		id            = flag.Int("id", 1, "node id")
 		addr          = flag.String("addr", ":7001", "HTTP listen address")
+		advertiseURL  = flag.String("advertise-url", "", "base URL advertised to peers and proxies")
 		walDir        = flag.String("wal-dir", "./data/node1", "WAL and raft metadata directory")
 		peerFlag      = flag.String("peers", "", "comma-separated peers as id=url, e.g. 2=http://127.0.0.1:7002")
 		ttlInterval   = flag.Duration("ttl-interval", time.Second, "TTL cleanup interval")
@@ -69,6 +66,19 @@ func main() {
 	peerIDs, peerURLs, err := parsePeers(*peerFlag)
 	if err != nil {
 		log.Fatal(err)
+	}
+	selfURL := strings.TrimRight(*advertiseURL, "/")
+	if selfURL == "" {
+		if strings.HasPrefix(*addr, ":") {
+			selfURL = "http://127.0.0.1" + *addr
+		} else {
+			selfURL = "http://" + *addr
+		}
+	}
+	memberURLs := make(map[int]string, len(peerURLs)+1)
+	memberURLs[*id] = selfURL
+	for peerID, peerURL := range peerURLs {
+		memberURLs[peerID] = peerURL
 	}
 
 	kv := store.New()
@@ -91,11 +101,13 @@ func main() {
 	defer cancel()
 	go store.NewTTLWorker(kv, *ttlInterval).Run(ctx)
 
+	transport := &raft.HTTPTransport{PeerURLs: peerURLs, Client: &http.Client{Timeout: 750 * time.Millisecond}}
 	node, err := raft.NewNode(raft.Config{
-		ID:        *id,
-		Peers:     peerIDs,
-		Transport: raft.HTTPTransport{PeerURLs: peerURLs, Client: &http.Client{Timeout: 750 * time.Millisecond}},
-		Storage:   raft.NewFileStorage(*walDir),
+		ID:         *id,
+		Peers:      peerIDs,
+		MemberURLs: memberURLs,
+		Transport:  transport,
+		Storage:    raft.NewFileStorage(*walDir),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -103,37 +115,58 @@ func main() {
 	node.Start()
 	defer node.Stop()
 
-	tracker := newAppliedTracker()
+	tracker := newAppliedTracker(node.Report().LastApplied)
 	go applyCommitted(node, kv, logFile, tracker, *compactEvery)
 
 	mux := http.NewServeMux()
 	raft.RegisterHTTPHandlers(mux, node)
 	registerKVHandlers(mux, node, kv, tracker, *commitTimeout)
 
-	log.Printf("kv-node id=%d addr=%s peers=%v replayed=%d", *id, *addr, peerURLs, len(commands))
+	log.Printf("kv-node id=%d addr=%s advertise=%s peers=%v replayed=%d", *id, *addr, selfURL, peerURLs, len(commands))
 	if err := http.ListenAndServe(*addr, mux); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
 
 func applyCommitted(node *raft.Node, kv *store.Store, logFile *wal.WAL, tracker *appliedTracker, compactEvery int) {
-	applied := -1
+	applied := node.Report().LastApplied
 	sinceCompact := 0
-	for entry := range node.CommitChan() {
-		if err := logFile.Append(entry.Command); err != nil {
-			log.Printf("wal append failed: %v", err)
-			continue
-		}
-		kv.Apply(entry.Command)
-		applied++
-		sinceCompact++
-		tracker.mark(applied)
+	for {
+		select {
+		case installed := <-node.SnapshotChan():
+			if installed.LastIncludedIndex <= applied {
+				continue
+			}
+			kv.Restore(installed.Snapshot)
+			if err := logFile.Compact(installed.Snapshot); err != nil {
+				log.Printf("wal snapshot install failed: %v", err)
+			}
+			sinceCompact = 0
+			applied = installed.LastIncludedIndex
+			tracker.mark(installed.LastIncludedIndex)
+		case entry := <-node.CommitChan():
+			if entry.Index <= applied {
+				continue
+			}
+			if entry.ConfigChange == nil {
+				if err := logFile.Append(entry.Command); err != nil {
+					log.Printf("wal append failed: %v", err)
+					continue
+				}
+				kv.Apply(entry.Command)
+				sinceCompact++
+			}
+			applied = entry.Index
+			tracker.mark(entry.Index)
 
-		if compactEvery > 0 && sinceCompact >= compactEvery {
-			if err := logFile.Compact(kv.Snapshot()); err != nil {
-				log.Printf("wal compaction failed: %v", err)
-			} else {
-				sinceCompact = 0
+			if compactEvery > 0 && sinceCompact >= compactEvery {
+				snapshot := kv.Snapshot()
+				if err := logFile.Compact(snapshot); err != nil {
+					log.Printf("wal compaction failed: %v", err)
+				} else {
+					node.Compact(snapshot)
+					sinceCompact = 0
+				}
 			}
 		}
 	}
@@ -149,10 +182,28 @@ func registerKVHandlers(mux *http.ServeMux, node *raft.Node, kv *store.Store, tr
 			http.Error(w, "missing key", http.StatusBadRequest)
 			return
 		}
+		index, ok := node.ReadIndex(r.Context())
+		if !ok {
+			http.Error(w, "read quorum unavailable", http.StatusConflict)
+			return
+		}
+		if !tracker.wait(r.Context(), index) {
+			http.Error(w, "read index timeout", http.StatusGatewayTimeout)
+			return
+		}
 		value, ok := kv.Get(key)
 		writeJSON(w, map[string]any{"found": ok, "value": value})
 	})
 	mux.HandleFunc("/kv/keys", func(w http.ResponseWriter, r *http.Request) {
+		index, ok := node.ReadIndex(r.Context())
+		if !ok {
+			http.Error(w, "read quorum unavailable", http.StatusConflict)
+			return
+		}
+		if !tracker.wait(r.Context(), index) {
+			http.Error(w, "read index timeout", http.StatusGatewayTimeout)
+			return
+		}
 		writeJSON(w, map[string]any{"keys": kv.Keys()})
 	})
 	mux.HandleFunc("/kv/set", func(w http.ResponseWriter, r *http.Request) {
@@ -182,10 +233,56 @@ func registerKVHandlers(mux *http.ServeMux, node *raft.Node, kv *store.Store, tr
 		cmd.Op = "delete"
 		submitAndWait(w, r, node, tracker, cmd, commitTimeout)
 	})
+	mux.HandleFunc("/cluster/members", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, map[string]any{"members": node.Members()})
+	})
+	mux.HandleFunc("/cluster/add", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var member raft.Member
+		if err := json.NewDecoder(r.Body).Decode(&member); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		submitConfigAndWait(w, r, node, tracker, raft.ConfigChange{Type: "add", ID: member.ID, URL: strings.TrimRight(member.URL, "/")}, commitTimeout)
+	})
+	mux.HandleFunc("/cluster/remove", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var member raft.Member
+		if err := json.NewDecoder(r.Body).Decode(&member); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		submitConfigAndWait(w, r, node, tracker, raft.ConfigChange{Type: "remove", ID: member.ID}, commitTimeout)
+	})
 }
 
 func submitAndWait(w http.ResponseWriter, r *http.Request, node *raft.Node, tracker *appliedTracker, cmd store.Command, timeout time.Duration) {
 	index, ok := node.SubmitWithIndex(cmd)
+	if !ok {
+		http.Error(w, "not leader", http.StatusConflict)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	if !tracker.wait(ctx, index) {
+		http.Error(w, "commit timeout", http.StatusGatewayTimeout)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "index": index})
+}
+
+func submitConfigAndWait(w http.ResponseWriter, r *http.Request, node *raft.Node, tracker *appliedTracker, change raft.ConfigChange, timeout time.Duration) {
+	index, ok := node.SubmitConfigChange(change)
 	if !ok {
 		http.Error(w, "not leader", http.StatusConflict)
 		return

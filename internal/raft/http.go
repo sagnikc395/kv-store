@@ -7,27 +7,52 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type HTTPTransport struct {
+	mu       sync.RWMutex
 	PeerURLs map[int]string
 	Client   *http.Client
 }
 
-func (t HTTPTransport) RequestVote(ctx context.Context, peerID int, args RequestVoteArgs) (RequestVoteReply, error) {
+func (t *HTTPTransport) RequestVote(ctx context.Context, peerID int, args RequestVoteArgs) (RequestVoteReply, error) {
 	var reply RequestVoteReply
 	err := t.post(ctx, peerID, "/raft/request-vote", args, &reply)
 	return reply, err
 }
 
-func (t HTTPTransport) AppendEntries(ctx context.Context, peerID int, args AppendEntriesArgs) (AppendEntriesReply, error) {
+func (t *HTTPTransport) AppendEntries(ctx context.Context, peerID int, args AppendEntriesArgs) (AppendEntriesReply, error) {
 	var reply AppendEntriesReply
 	err := t.post(ctx, peerID, "/raft/append-entries", args, &reply)
 	return reply, err
 }
 
-func (t HTTPTransport) post(ctx context.Context, peerID int, path string, body any, out any) error {
+func (t *HTTPTransport) InstallSnapshot(ctx context.Context, peerID int, args InstallSnapshotArgs) (InstallSnapshotReply, error) {
+	var reply InstallSnapshotReply
+	err := t.post(ctx, peerID, "/raft/install-snapshot", args, &reply)
+	return reply, err
+}
+
+func (t *HTTPTransport) SetPeerURL(peerID int, url string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.PeerURLs == nil {
+		t.PeerURLs = make(map[int]string)
+	}
+	t.PeerURLs[peerID] = url
+}
+
+func (t *HTTPTransport) RemovePeerURL(peerID int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.PeerURLs, peerID)
+}
+
+func (t *HTTPTransport) post(ctx context.Context, peerID int, path string, body any, out any) error {
+	t.mu.RLock()
 	baseURL, ok := t.PeerURLs[peerID]
+	t.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("missing peer URL for id %d", peerID)
 	}
@@ -79,6 +104,18 @@ func RegisterHTTPHandlers(mux *http.ServeMux, node *Node) {
 			return
 		}
 		writeJSON(w, node.AppendEntries(args))
+	})
+	mux.HandleFunc("/raft/install-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var args InstallSnapshotArgs
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, node.InstallSnapshot(args))
 	})
 }
 

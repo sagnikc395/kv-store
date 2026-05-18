@@ -27,8 +27,27 @@ func (s State) String() string {
 }
 
 type LogEntry struct {
-	Command store.Command `json:"command"`
-	Term    int           `json:"term"`
+	Command      store.Command `json:"command,omitempty"`
+	ConfigChange *ConfigChange `json:"config_change,omitempty"`
+	Term         int           `json:"term"`
+	Index        int           `json:"-"`
+}
+
+type ConfigChange struct {
+	Type string `json:"type"`
+	ID   int    `json:"id"`
+	URL  string `json:"url,omitempty"`
+}
+
+type Member struct {
+	ID  int    `json:"id"`
+	URL string `json:"url"`
+}
+
+type SnapshotState struct {
+	LastIncludedIndex int            `json:"last_included_index"`
+	LastIncludedTerm  int            `json:"last_included_term"`
+	Data              store.Snapshot `json:"data"`
 }
 
 type RequestVoteArgs struct {
@@ -55,4 +74,16 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int  `json:"term"`
 	Success bool `json:"success"`
+}
+
+type InstallSnapshotArgs struct {
+	Term              int            `json:"term"`
+	LeaderID          int            `json:"leader_id"`
+	LastIncludedIndex int            `json:"last_included_index"`
+	LastIncludedTerm  int            `json:"last_included_term"`
+	Snapshot          store.Snapshot `json:"snapshot"`
+}
+
+type InstallSnapshotReply struct {
+	Term int `json:"term"`
 }

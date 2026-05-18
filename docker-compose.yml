@@ -5,6 +5,7 @@ services:
     command:
       - "--id=1"
       - "--addr=:7001"
+      - "--advertise-url=http://node1:7001"
       - "--wal-dir=/data"
       - "--peers=2=http://node2:7002,3=http://node3:7003"
     ports:
@@ -18,6 +19,7 @@ services:
     command:
       - "--id=2"
       - "--addr=:7002"
+      - "--advertise-url=http://node2:7002"
       - "--wal-dir=/data"
       - "--peers=1=http://node1:7001,3=http://node3:7003"
     ports:
@@ -31,6 +33,7 @@ services:
     command:
       - "--id=3"
       - "--addr=:7003"
+      - "--advertise-url=http://node3:7003"
       - "--wal-dir=/data"
       - "--peers=1=http://node1:7001,2=http://node2:7002"
     ports:

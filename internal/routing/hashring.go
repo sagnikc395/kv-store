@@ -29,6 +29,20 @@ func NewHashRing(nodes []string, virtualNodes int) *HashRing {
 func (r *HashRing) Add(node string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.addLocked(node)
+}
+
+func (r *HashRing) SetNodes(nodes []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ring = make(map[uint64]string)
+	r.sorted = nil
+	for _, node := range nodes {
+		r.addLocked(node)
+	}
+}
+
+func (r *HashRing) addLocked(node string) {
 	for i := 0; i < r.virtualNodes; i++ {
 		key := hash(node + "#" + strconv.Itoa(i))
 		if _, exists := r.ring[key]; !exists {

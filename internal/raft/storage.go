@@ -6,12 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/sagnikc395/kv-store/internal/store"
 )
 
 type PersistentState struct {
-	CurrentTerm int        `json:"current_term"`
-	VotedFor    int        `json:"voted_for"`
-	Log         []LogEntry `json:"log"`
+	CurrentTerm int            `json:"current_term"`
+	VotedFor    int            `json:"voted_for"`
+	Log         []LogEntry     `json:"log"`
+	Snapshot    SnapshotState  `json:"snapshot"`
+	Members     map[int]string `json:"members,omitempty"`
 }
 
 type Storage interface {
@@ -97,6 +101,18 @@ func cloneState(state PersistentState) PersistentState {
 	next := state
 	if state.Log != nil {
 		next.Log = append([]LogEntry(nil), state.Log...)
+	}
+	if state.Members != nil {
+		next.Members = make(map[int]string, len(state.Members))
+		for id, url := range state.Members {
+			next.Members[id] = url
+		}
+	}
+	if state.Snapshot.Data.Entries != nil {
+		next.Snapshot.Data.Entries = make(map[string]store.SnapshotEntry, len(state.Snapshot.Data.Entries))
+		for key, entry := range state.Snapshot.Data.Entries {
+			next.Snapshot.Data.Entries[key] = entry
+		}
 	}
 	return next
 }

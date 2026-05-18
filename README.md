@@ -8,10 +8,19 @@ channels, HTTP JSON RPC, durable Raft metadata, and WAL snapshot compaction.
 - **Concurrent core:** Raft elections, heartbeats, log replication, TTL cleanup,
   and commit application run as goroutines coordinated with mutexes and channels.
 - **HTTP JSON transport:** Node, proxy, and Raft traffic use plain HTTP+JSON.
-- **Durable Raft metadata:** each node persists `currentTerm`, `votedFor`, and
-  the replicated log in `raft_state.json`.
+- **Durable Raft metadata:** each node persists `currentTerm`, `votedFor`,
+  membership, snapshots, and the retained replicated log in `raft_state.json`.
 - **WAL compaction:** the append-only WAL can be compacted into `snapshot.json`
   so replay time and disk usage do not grow forever.
+- **Raft snapshot install:** lagging followers can receive installed KV
+  snapshots and continue replication from the compacted Raft log boundary.
+- **Dynamic membership:** leaders replicate single-step add/remove membership
+  changes through the Raft log.
+- **Read index:** node reads first confirm leader quorum and wait for the local
+  store to apply through the returned read index.
+- **Dynamic proxy discovery:** the proxy refreshes its node ring from
+  `/cluster/members` and retries leader-only operations against the elected
+  leader.
 - **Crash-safe TTLs:** TTL writes are converted to absolute expiration timestamps
   before replication/WAL append, so a restart does not accidentally extend a key's
   lifetime.
@@ -64,12 +73,15 @@ In separate terminals:
 
 ```bash
 go run ./cmd/kv-node --id=1 --addr=:7001 --wal-dir=./data/node1 \
+  --advertise-url=http://127.0.0.1:7001 \
   --peers=2=http://127.0.0.1:7002,3=http://127.0.0.1:7003
 
 go run ./cmd/kv-node --id=2 --addr=:7002 --wal-dir=./data/node2 \
+  --advertise-url=http://127.0.0.1:7002 \
   --peers=1=http://127.0.0.1:7001,3=http://127.0.0.1:7003
 
 go run ./cmd/kv-node --id=3 --addr=:7003 --wal-dir=./data/node3 \
+  --advertise-url=http://127.0.0.1:7003 \
   --peers=1=http://127.0.0.1:7001,2=http://127.0.0.1:7002
 
 go run ./cmd/kv-proxy --addr=:8000 \
@@ -96,6 +108,16 @@ curl -X POST http://127.0.0.1:8000/kv/delete \
 curl -X POST http://127.0.0.1:8000/kv/set \
   -H 'Content-Type: application/json' \
   -d '{"key":"tmp","value":"gone-soon","ttl":5}'
+
+# add a node through the Raft leader
+curl -X POST http://127.0.0.1:7001/cluster/add \
+  -H 'Content-Type: application/json' \
+  -d '{"id":4,"url":"http://127.0.0.1:7004"}'
+
+# remove a node through the Raft leader
+curl -X POST http://127.0.0.1:7001/cluster/remove \
+  -H 'Content-Type: application/json' \
+  -d '{"id":4}'
 ```
 
 ## Docker Compose
@@ -111,12 +133,12 @@ Exposed ports:
 - Node 3: `localhost:7003`
 - Proxy:  `localhost:8000`
 
-## Remaining Limitations
+## Notes
 
-- Dynamic Raft membership is not implemented.
-- The proxy uses static node membership.
-- Snapshotting compacts the local KV WAL; Raft log snapshot installation is not yet implemented.
-- Reads are local to the selected node; a full read-index path is future work.
+- Membership changes are single-step add/remove operations, not joint-consensus
+  reconfiguration.
+- Newly added nodes still need to be started with enough peer seed URLs to
+  contact the current cluster.
 
 ## License
 
